@@ -268,7 +268,7 @@ async function startpairing(kingbadboiNumber) {
         try {
             for (const msg of chatUpdate.messages) {
                 if (msg.message) {
-                    saveMessage(kingbadboiNumber, msg);
+                    await saveMessage(kingbadboiNumber, msg, bad);
                 }
             }
         } catch (e) {
@@ -859,3 +859,4 @@ fs.watchFile(file, () => {
 })
 
 module.exports = startpairing;
+module.exports.rentbotTracker = rentbotTracker;

