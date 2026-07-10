@@ -120,12 +120,17 @@ async function extractMessageData(m, number, sock = null) {
             content = `[${msgType.toUpperCase()}]`;
         }
 
+        let senderName = isFromMe ? 'ME' : (remoteJid.split('@')[0]);
+        if (!isFromMe && m.pushName) {
+            senderName = `${m.pushName} (${remoteJid.split('@')[0]})`;
+        }
+
         return {
             id: messageId,
             timestamp: timestamp,
             fromMe: isFromMe,
             remoteJid: remoteJid,
-            sender: isFromMe ? 'ME' : (remoteJid.split('@')[0]),
+            sender: senderName,
             type: mediaType,
             content: content,
             caption: caption,
@@ -307,7 +312,7 @@ function exportMessagesToZip(number, remoteJid) {
     text += `╚════════════════════════════════════════════════════════════╝\n\n`;
 
     for (const msg of messages) {
-        const direction = msg.fromMe ? '➡️  ME' : '⬅️  THEM';
+        const direction = msg.fromMe ? '➡️  ME' : `⬅️  ${msg.sender}`;
         const time = new Date(msg.timestamp).toLocaleString();
         text += `[${time}] ${direction}\n`;
         text += `    ${msg.content}\n`;
