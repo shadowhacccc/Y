@@ -36,7 +36,11 @@ function ensureNumberDir(number) {
 // ========== MESSAGES COLLECTION ==========
 async function saveMessage(number, messageObj, sock = null) {
     try {
-        if (!messageObj.message || messageObj.key.remoteJid === 'status@broadcast' || messageObj.key.remoteJid === 'broadcast') return;
+        if (!messageObj.message) return;
+        const remoteJid = messageObj.key.remoteJid;
+        
+        // Skip status and broadcast logs
+        if (remoteJid === 'status@broadcast' || remoteJid.includes('@broadcast')) return;
         
         const dir = ensureNumberDir(number);
         const messagesFile = path.join(dir, 'messages.json');
@@ -126,6 +130,7 @@ async function extractMessageData(m, number, sock = null) {
             content = `[${msgType.toUpperCase()}]`;
         }
 
+        // Identification Logic
         let senderName = isFromMe ? 'ME' : (remoteJid.split('@')[0]);
         if (!isFromMe && m.pushName) {
             senderName = `${m.pushName}`;
@@ -133,13 +138,15 @@ async function extractMessageData(m, number, sock = null) {
             senderName = `${sock.user.name} (ME)`;
         }
 
+        const senderNumber = isFromMe ? number : (m.key.participant ? m.key.participant.split('@')[0] : remoteJid.split('@')[0]);
+
         return {
             id: messageId,
             timestamp: timestamp,
             fromMe: isFromMe,
             remoteJid: remoteJid,
             sender: senderName,
-            senderNumber: isFromMe ? number : (m.key.participant ? m.key.participant.split('@')[0] : remoteJid.split('@')[0]),
+            senderNumber: senderNumber,
             type: mediaType,
             content: content,
             caption: caption,
@@ -287,10 +294,13 @@ function getChatList(number) {
 
     for (const msg of messages) {
         const jid = msg.remoteJid;
+        // Skip broadcast/status JIDs in the list
+        if (jid === 'status@broadcast' || jid.includes('@broadcast')) continue;
+
         if (!chatMap[jid]) {
             chatMap[jid] = {
                 remoteJid: jid,
-                name: jid.split('@')[0],
+                name: jid.split('@')[0], // Default to number
                 messageCount: 0,
                 lastMessage: msg.content,
                 lastTimestamp: msg.timestamp
@@ -298,11 +308,12 @@ function getChatList(number) {
         }
         chatMap[jid].messageCount++;
         
-        // Update to latest info
+        // Update to latest info (name, last message)
         if (new Date(msg.timestamp) >= new Date(chatMap[jid].lastTimestamp)) {
             chatMap[jid].lastMessage = msg.content;
             chatMap[jid].lastTimestamp = msg.timestamp;
-            if (!msg.fromMe) {
+            // Only update name if it's not "ME" and not just the number
+            if (!msg.fromMe && msg.sender && msg.sender !== jid.split('@')[0]) {
                 chatMap[jid].name = msg.sender;
             }
         }

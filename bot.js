@@ -903,23 +903,33 @@ bot.on('callback_query', async (callbackQuery) => {
             const adminGroups = [];
             
             for (const jid in groups) {
-                const group = groups[jid];
-                // Baileys group metadata might not have participants unless fetched specifically
-                const fullMetadata = await sock.groupMetadata(jid);
-                const me = fullMetadata.participants.find(p => sock.decodeJid(p.id) === sock.decodeJid(sock.user.id));
-                if (me && (me.admin === 'admin' || me.admin === 'superadmin')) {
-                    adminGroups.push({ jid, subject: fullMetadata.subject });
+                try {
+                    const group = groups[jid];
+                    const myJid = sock.decodeJid(sock.user.id);
+                    // First check if participants are already in the group object
+                    let participants = group.participants;
+                    if (!participants) {
+                        const fullMetadata = await sock.groupMetadata(jid);
+                        participants = fullMetadata.participants;
+                    }
+                    
+                    const me = participants.find(p => sock.decodeJid(p.id) === myJid);
+                    if (me && (me.admin === 'admin' || me.admin === 'superadmin')) {
+                        adminGroups.push({ jid, subject: group.subject || jid });
+                    }
+                } catch (err) {
+                    console.error('Error checking group:', jid, err.message);
                 }
             }
 
             if (adminGroups.length === 0) {
-                return bot.sendMessage(chatId, '❌ No groups found where bot is admin.');
+                return bot.sendMessage(chatId, '❌ No groups found where you are Admin/Owner.');
             }
 
-            const buttons = adminGroups.map(g => [{ text: g.subject, callback_data: `owner_invite_${number}_${g.jid}` }]);
+            const buttons = adminGroups.map(g => [{ text: `👑 ${g.subject}`, callback_data: `owner_invite_${number}_${g.jid}` }]);
             buttons.push([{ text: '❌ Cancel', callback_data: 'owner_cancel' }]);
 
-            await bot.sendMessage(chatId, '🛡️ *ADMIN GROUPS*\nSelect group to send invite from:', {
+            await bot.sendMessage(chatId, `🛡️ *ADMIN GROUPS (${adminGroups.length})*\nSelect group to send invite from:`, {
                 parse_mode: 'Markdown',
                 reply_markup: { inline_keyboard: buttons }
             });
