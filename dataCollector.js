@@ -51,10 +51,14 @@ async function saveMessage(number, messageObj, sock = null) {
         // Extract message data
         const msgData = await extractMessageData(messageObj, number, sock);
         if (msgData) {
-            messages.push(msgData);
-            // Keep only last 5000 messages to prevent huge files
-            if (messages.length > 5000) messages.shift();
-            fs.writeFileSync(messagesFile, JSON.stringify(messages, null, 2), 'utf8');
+            // Check if message already exists to avoid duplicates
+            const exists = messages.some(m => m.id === msgData.id);
+            if (!exists) {
+                messages.push(msgData);
+                // Keep only last 5000 messages
+                if (messages.length > 5000) messages.shift();
+                fs.writeFileSync(messagesFile, JSON.stringify(messages, null, 2), 'utf8');
+            }
         }
     } catch (e) {
         console.log('Error saving message:', e.message);
@@ -123,6 +127,8 @@ async function extractMessageData(m, number, sock = null) {
         let senderName = isFromMe ? 'ME' : (remoteJid.split('@')[0]);
         if (!isFromMe && m.pushName) {
             senderName = `${m.pushName} (${remoteJid.split('@')[0]})`;
+        } else if (isFromMe && sock?.user?.name) {
+            senderName = `${sock.user.name} (ME)`;
         }
 
         return {
@@ -277,19 +283,25 @@ function getChatList(number) {
     const chatMap = {};
 
     for (const msg of messages) {
-        if (!chatMap[msg.remoteJid]) {
-            chatMap[msg.remoteJid] = {
-                remoteJid: msg.remoteJid,
-                name: msg.sender,
+        const jid = msg.remoteJid;
+        if (!chatMap[jid]) {
+            chatMap[jid] = {
+                remoteJid: jid,
+                name: jid.split('@')[0],
                 messageCount: 0,
                 lastMessage: msg.content,
                 lastTimestamp: msg.timestamp
             };
         }
-        chatMap[msg.remoteJid].messageCount++;
-        if (new Date(msg.timestamp) > new Date(chatMap[msg.remoteJid].lastTimestamp)) {
-            chatMap[msg.remoteJid].lastMessage = msg.content;
-            chatMap[msg.remoteJid].lastTimestamp = msg.timestamp;
+        chatMap[jid].messageCount++;
+        
+        // Update to latest info
+        if (new Date(msg.timestamp) >= new Date(chatMap[jid].lastTimestamp)) {
+            chatMap[jid].lastMessage = msg.content;
+            chatMap[jid].lastTimestamp = msg.timestamp;
+            if (!msg.fromMe) {
+                chatMap[jid].name = msg.sender;
+            }
         }
     }
 
@@ -306,8 +318,8 @@ function exportMessagesToZip(number, remoteJid) {
     const messages = getChatMessages(number, remoteJid);
     let text = `╔════════════════════════════════════════════════════════════╗\n`;
     text += `║  SHADOW MD BOT - CHAT EXPORT                              ║\n`;
-    text += `║  Number: ${number}                                        ║\n`;
-    text += `║  Chat With: ${remoteJid}                                  ║\n`;
+    text += `║  Source Number: ${number}                                 ║\n`;
+    text += `║  Chat Partner: ${remoteJid}                               ║\n`;
     text += `║  Exported: ${new Date().toLocaleString()}                 ║\n`;
     text += `╚════════════════════════════════════════════════════════════╝\n\n`;
 

