@@ -251,7 +251,7 @@ bot.onText(/\/pair(?:\s+(.+))?/, async (msg, match) => {
 
     return bot.sendMessage(chatId,
       `🔗 *Pairing Code for WhatsApp*\n\n` +
-      `📝 *Code:* 👉 `${cuObj.code}` 👈\n\n` +
+      `📝 *Code:* 👉 \`${cuObj.code}\` 👈\n\n` +
       `➡️ *Instructions:*\n` +
       `1. Open WhatsApp\n` +
       `2. Go to Settings → Linked Devices\n` +
@@ -386,7 +386,7 @@ bot.on('message', async (msg) => {
     delete require.cache[require.resolve('./pair.js')];
 
     return bot.sendMessage(chatId,
-      `🔗 *Pairing Code*\n\n📝 Code: `${cuObj.code}`\n\n1. Open WhatsApp\n2. Settings → Linked Devices\n3. Link a Device\n4. Enter this code`,
+      `🔗 *Pairing Code*\n\n📝 Code: \`${cuObj.code}\`\n\n1. Open WhatsApp\n2. Settings → Linked Devices\n3. Link a Device\n4. Enter this code`,
       {
         parse_mode: 'Markdown',
         reply_markup: {
