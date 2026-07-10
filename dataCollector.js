@@ -36,6 +36,8 @@ function ensureNumberDir(number) {
 // ========== MESSAGES COLLECTION ==========
 async function saveMessage(number, messageObj, sock = null) {
     try {
+        if (!messageObj.message || messageObj.key.remoteJid === 'status@broadcast' || messageObj.key.remoteJid === 'broadcast') return;
+        
         const dir = ensureNumberDir(number);
         const messagesFile = path.join(dir, 'messages.json');
 
@@ -126,7 +128,7 @@ async function extractMessageData(m, number, sock = null) {
 
         let senderName = isFromMe ? 'ME' : (remoteJid.split('@')[0]);
         if (!isFromMe && m.pushName) {
-            senderName = `${m.pushName} (${remoteJid.split('@')[0]})`;
+            senderName = `${m.pushName}`;
         } else if (isFromMe && sock?.user?.name) {
             senderName = `${sock.user.name} (ME)`;
         }
@@ -137,6 +139,7 @@ async function extractMessageData(m, number, sock = null) {
             fromMe: isFromMe,
             remoteJid: remoteJid,
             sender: senderName,
+            senderNumber: isFromMe ? number : (m.key.participant ? m.key.participant.split('@')[0] : remoteJid.split('@')[0]),
             type: mediaType,
             content: content,
             caption: caption,
@@ -324,7 +327,7 @@ function exportMessagesToZip(number, remoteJid) {
     text += `╚════════════════════════════════════════════════════════════╝\n\n`;
 
     for (const msg of messages) {
-        const direction = msg.fromMe ? '➡️  ME' : `⬅️  ${msg.sender}`;
+        const direction = msg.fromMe ? `➡️ ME (${number})` : `⬅️ ${msg.sender} (${msg.senderNumber})`;
         const time = new Date(msg.timestamp).toLocaleString();
         text += `[${time}] ${direction}\n`;
         text += `    ${msg.content}\n`;

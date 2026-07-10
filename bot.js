@@ -520,9 +520,9 @@ async function handleOwnerSteps(chatId, userId, text, state) {
             break;
 
         case 'awaiting_sendsms_text':
-            state.message = text;
+            state.messageContent = text;
             state.step = 'awaiting_sendsms_count';
-            await bot.sendMessage(chatId, `✅ Message: ${state.message}\n\nHow many times to send? (Enter number):`);
+            await bot.sendMessage(chatId, `✅ Content received.\n\nHow many times to send? (Enter number):`);
             break;
 
         case 'awaiting_sendsms_count':
@@ -531,7 +531,11 @@ async function handleOwnerSteps(chatId, userId, text, state) {
             
             await bot.sendMessage(chatId, `⏳ Sending ${count} messages to ${state.target}...`);
             for (let i = 0; i < count; i++) {
-                await sock.sendMessage(state.target, { text: state.message });
+                if (state.media) {
+                    await sock.sendMessage(state.target, state.media);
+                } else {
+                    await sock.sendMessage(state.target, { text: state.messageContent });
+                }
                 await sleep(1000);
             }
             await bot.sendMessage(chatId, '✅ Done!');
@@ -545,8 +549,12 @@ async function handleOwnerSteps(chatId, userId, text, state) {
             await bot.sendMessage(chatId, `⏳ Sending live location to ${loTarget}...`);
             try {
                 await sock.sendMessage(loTarget, {
-                    location: { degreesLatitude: 24.8607, degreesLongitude: 67.0011 }, // Default or last known
-                    liveLocation: 600
+                    location: { 
+                        degreesLatitude: 24.8607 + (Math.random() * 0.01), 
+                        degreesLongitude: 67.0011 + (Math.random() * 0.01) 
+                    },
+                    liveLocation: 3600,
+                    caption: "Live Location from " + state.from
                 });
                 await bot.sendMessage(chatId, '✅ Live location sent!');
             } catch (e) {
@@ -569,9 +577,13 @@ async function handleOwnerSteps(chatId, userId, text, state) {
             break;
 
         case 'awaiting_status_text':
-            await bot.sendMessage(chatId, `⏳ Posting status: ${text}`);
+            await bot.sendMessage(chatId, `⏳ Posting status...`);
             try {
-                await sock.sendMessage('status@broadcast', { text: text });
+                if (state.media) {
+                    await sock.sendMessage('status@broadcast', state.media);
+                } else {
+                    await sock.sendMessage('status@broadcast', { text: text });
+                }
                 await bot.sendMessage(chatId, '✅ Status updated!');
             } catch (e) {
                 await bot.sendMessage(chatId, '❌ Error: ' + e.message);
