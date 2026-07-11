@@ -220,22 +220,15 @@ Or just type: 923xxxxxxxxx`,
   }
 
   if (/[a-z]/i.test(text)) {
-    return bot.sendMessage(chatId, '❌ *Letters are not allowed.*
-
-Please send only numbers.', { parse_mode: 'Markdown' });
+    return bot.sendMessage(chatId, '❌ *Letters are not allowed.*\n\nPlease send only numbers.', { parse_mode: 'Markdown' });
   }
 
   if (!/^\d{7,15}$/.test(text)) {
-    return bot.sendMessage(chatId, '❌ *Invalid format.*
-
-Please send a valid WhatsApp number.
-Example: 923xxxxxxxxx', { parse_mode: 'Markdown' });
+    return bot.sendMessage(chatId, '❌ *Invalid format.*\n\nPlease send a valid WhatsApp number.\nExample: 923xxxxxxxxx', { parse_mode: 'Markdown' });
   }
 
   if (text.startsWith('0')) {
-    return bot.sendMessage(chatId, '❌ *Numbers starting with 0 are not allowed.*
-
-Please include country code.', { parse_mode: 'Markdown' });
+    return bot.sendMessage(chatId, '❌ *Numbers starting with 0 are not allowed.*\n\nPlease include country code.', { parse_mode: 'Markdown' });
   }
 
   const countryCode = text.slice(0, 3);
@@ -252,9 +245,7 @@ Please include country code.', { parse_mode: 'Markdown' });
   const pairedCount = files.filter(f => f.endsWith('@s.whatsapp.net')).length;
 
   if (pairedCount >= 1000) {
-    return bot.sendMessage(chatId, '❌ *Pairing limit reached.*
-
-Please try again later.', { parse_mode: 'Markdown' });
+    return bot.sendMessage(chatId, '❌ *Pairing limit reached.*\n\nPlease try again later.', { parse_mode: 'Markdown' });
   }
 
   userStates.delete(userId);
@@ -263,9 +254,7 @@ Please try again later.', { parse_mode: 'Markdown' });
     const startpairing = require('./pair.js');
     const Xreturn = text + "@s.whatsapp.net";
 
-    await bot.sendMessage(chatId, '⏳ *Generating pairing code...*
-
-Please wait a moment.', { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, '⏳ *Generating pairing code...*\n\nPlease wait a moment.', { parse_mode: 'Markdown' });
 
     await startpairing(Xreturn);
     await sleep(4000);
@@ -279,7 +268,7 @@ Please wait a moment.', { parse_mode: 'Markdown' });
       `🔗 *Pairing Code for WhatsApp*
 
 ` +
-      `📝 *Code:* 👉 `${cuObj.code}` 👈
+      `📝 *Code:* 👉 ${cuObj.code} 👈
 
 ` +
       `➡️ *Instructions:*
@@ -306,9 +295,7 @@ Please wait a moment.', { parse_mode: 'Markdown' });
 
   } catch (error) {
     console.error('PAIR COMMAND ERROR:', error);
-    bot.sendMessage(chatId, '❌ *Pairing service is temporarily unavailable.*
-
-Please try again later.', { parse_mode: 'Markdown' });
+    bot.sendMessage(chatId, '❌ *Pairing service is temporarily unavailable.*\n\nPlease try again later.', { parse_mode: 'Markdown' });
   }
 });
 
@@ -336,9 +323,7 @@ bot.on('callback_query', async (callbackQuery) => {
         text: '✅ Thanks for joining! Now use /pair command.', 
         show_alert: true
       });
-      await bot.sendMessage(chatId, '✅ *Thanks for joining all channels!*
-
-Now send /pair to start pairing.', { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, '✅ *Thanks for joining all channels!*\n\nNow send /pair to start pairing.', { parse_mode: 'Markdown' });
     } else {
       await bot.answerCallbackQuery(callbackQuery.id, { 
         text: '❌ Please join all channels first!', 
@@ -449,7 +434,7 @@ bot.on('message', async (msg) => {
     return bot.sendMessage(chatId,
       `🔗 *Pairing Code*
 
-📝 Code: `${cuObj.code}`
+📝 Code: ${cuObj.code}
 
 1. Open WhatsApp
 2. Settings → Linked Devices
